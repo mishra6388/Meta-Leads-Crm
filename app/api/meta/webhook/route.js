@@ -1,44 +1,82 @@
 import { NextResponse } from "next/server";
+import { adminDb } from "@/firebase/firebaseAdmin";
 
 export async function GET(req) {
-  try {
-    const searchParams = req.nextUrl.searchParams;
+  const searchParams =
+    req.nextUrl.searchParams;
 
-    const mode = searchParams.get("hub.mode");
-    const token = searchParams.get("hub.verify_token");
-    const challenge = searchParams.get("hub.challenge");
+  const mode =
+    searchParams.get("hub.mode");
 
-    console.log("Webhook Verification Request");
-    console.log("Mode:", mode);
-    console.log("Token:", token);
-    console.log("Challenge:", challenge);
+  const token =
+    searchParams.get(
+      "hub.verify_token"
+    );
 
-    if (
-      mode === "subscribe" &&
-      token === process.env.META_VERIFY_TOKEN
-    ) {
-      console.log("Webhook Verified Successfully");
+  const challenge =
+    searchParams.get(
+      "hub.challenge"
+    );
 
-      return new Response(challenge, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain",
-        },
-      });
-    }
-
-    console.log("Verification Failed");
-
-    return new Response("Verification failed", {
-      status: 403,
-    });
-  } catch (error) {
-    console.error("GET Webhook Error:", error);
-
-    return new Response("Server Error", {
-      status: 500,
+  if (
+    mode === "subscribe" &&
+    token ===
+      process.env.META_VERIFY_TOKEN
+  ) {
+    return new Response(challenge, {
+      status: 200,
     });
   }
+
+  return new Response(
+    "Verification failed",
+    {
+      status: 403,
+    }
+  );
+}
+
+async function getLeadData(
+  leadId
+) {
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v25.0/${leadId}?access_token=${process.env.META_PAGE_ACCESS_TOKEN}`
+    );
+
+    const data =
+      await response.json();
+
+    console.log(
+      "FULL LEAD DATA:",
+      JSON.stringify(
+        data,
+        null,
+        2
+      )
+    );
+
+    return data;
+  } catch (error) {
+    console.error(
+      "Lead Fetch Error:",
+      error
+    );
+
+    return null;
+  }
+}
+
+function getField(
+  fieldData,
+  fieldName
+) {
+  const field = fieldData?.find(
+    (item) =>
+      item.name === fieldName
+  );
+
+  return field?.values?.[0] || "";
 }
 
 export async function POST(req) {
@@ -46,60 +84,116 @@ export async function POST(req) {
     const body = await req.json();
 
     console.log(
-      "META WEBHOOK RECEIVED:"
+      "META WEBHOOK RECEIVED:",
+      JSON.stringify(
+        body,
+        null,
+        2
+      )
     );
 
-    console.log(
-      JSON.stringify(body, null, 2)
-    );
-
-    // Extract lead information
     if (
       body.object === "page" &&
       body.entry
     ) {
       for (const entry of body.entry) {
-        for (const change of entry.changes || []) {
+        for (const change of entry.changes ||
+          []) {
           if (
-            change.field === "leadgen"
+            change.field ===
+            "leadgen"
           ) {
-            const leadData =
-              change.value;
+            const leadId =
+              change.value
+                .leadgen_id;
 
             console.log(
-              "NEW LEAD RECEIVED"
-            );
-            console.log(
               "Lead ID:",
-              leadData.leadgen_id
+              leadId
             );
+
+            const leadData =
+              await getLeadData(
+                leadId
+              );
+
+            if (
+              !leadData ||
+              !leadData.field_data
+            ) {
+              console.log(
+                "No lead data found"
+              );
+              continue;
+            }
+
+            const fullName =
+              getField(
+                leadData.field_data,
+                "full_name"
+              );
+
+            const phone =
+              getField(
+                leadData.field_data,
+                "phone_number"
+              );
+
+            const email =
+              getField(
+                leadData.field_data,
+                "email"
+              );
+
+            const leadDoc = {
+              name: fullName,
+              phone,
+              email,
+
+              source:
+                "Facebook Lead Ads",
+
+              campaign:
+                "Meta Lead Form",
+
+              status:
+                "New Lead",
+
+              leadId,
+
+              pageId:
+                change.value
+                  .page_id,
+
+              formId:
+                change.value
+                  .form_id,
+
+              createdAt:
+                new Date(),
+            };
+
+            await adminDb
+              .collection(
+                "leads"
+              )
+              .add(leadDoc);
+
             console.log(
-              "Form ID:",
-              leadData.form_id
-            );
-            console.log(
-              "Page ID:",
-              leadData.page_id
-            );
-            console.log(
-              "Created Time:",
-              leadData.created_time
+              "Lead Saved:",
+              leadDoc
             );
           }
         }
       }
     }
 
-    return NextResponse.json(
-      {
-        success: true,
-        received: true,
-      },
-      { status: 200 }
-    );
+    return NextResponse.json({
+      success: true,
+    });
   } catch (error) {
     console.error(
-      "POST Webhook Error:",
+      "Webhook Error:",
       error
     );
 
