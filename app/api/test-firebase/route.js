@@ -7,7 +7,7 @@ export async function GET() {
       .collection("test")
       .doc("connection")
       .set({
-        message: "Firebase Admin Working",
+        message: "Firebase Admin connected succsessfully!",
         createdAt: new Date(),
       });
 
